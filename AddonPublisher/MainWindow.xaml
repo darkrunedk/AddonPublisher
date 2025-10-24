@@ -5,8 +5,15 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:AddonPublisher"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-
-    </Grid>
+        Title="MainWindow" Height="270" Width="500">
+    <StackPanel Margin="10">
+        <TextBlock Text="Select folder to zip:" Margin="0,0,0,5"/>
+        <Button Content="Browse Folder" Click="BrowseFolder_Click" Margin="0,0,0,10"/>
+        <TextBlock Text="Select .toc file (if multiple):" Margin="0,10,0,5"/>
+        <ListBox x:Name="TocFileList" Visibility="Collapsed" Height="100" SelectionMode="Single" SelectionChanged="TocFileList_SelectionChanged"/>
+        <TextBlock Text="Zip file name:" Margin="0,10,0,5"/>
+        <TextBox x:Name="ZipNameBox" Margin="0,0,0,10" Height="25"/>
+        <TextBlock x:Name="SelectedFolderText" Text="No folder selected" Margin="0,0,0,10"/>
+        <Button Content="Create Zip" Click="CreateZip_Click"/>
+    </StackPanel>
 </Window>
