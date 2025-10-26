@@ -1,8 +1,12 @@
 ﻿using AddonPublisher.Models.Enums;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,6 +23,10 @@ namespace AddonPublisher
         private string _selectedFolder = "";
         private string _lastZipPath = "";
         private readonly double _windowBaseHeight;
+        private string _latestReleaseUrl = null;
+
+        private readonly Queue<(string message, ToastType type, int duration)> _toastQueue = new();
+        private bool _isToastShowing = false;
 
         public MainWindow()
         {
@@ -81,7 +89,7 @@ namespace AddonPublisher
         {
             if (string.IsNullOrEmpty(_selectedFolder))
             {
-                ShowToast("No folder selected.", ToastType.Error);
+                EnqueueToast("No folder selected.", ToastType.Error);
                 return;
             }
 
@@ -101,7 +109,7 @@ namespace AddonPublisher
             var addonInfo = GetAddonInfoFromToc();
             if (addonInfo == null)
             {
-                ShowToast("No .toc file selected or found.", ToastType.Error);
+                EnqueueToast("No .toc file selected or found.", ToastType.Error);
                 return;
             }
 
@@ -131,7 +139,7 @@ namespace AddonPublisher
                 archive.CreateEntryFromFile(file, relativePath);
             }
 
-            ShowToast("Zip file created successfully!", ToastType.Success);
+            EnqueueToast("Zip file created successfully!", ToastType.Success);
 
             _lastZipPath = zipPath;
             OpenFolderButton.IsEnabled = true;
@@ -226,52 +234,141 @@ namespace AddonPublisher
             if (!string.IsNullOrEmpty(_lastZipPath) && File.Exists(_lastZipPath))
             {
                 string folder = Path.GetDirectoryName(_lastZipPath)!;
-                System.Diagnostics.Process.Start("explorer.exe", folder);
+                Process.Start("explorer.exe", folder);
             }
         }
 
-        private async void ShowToast(string message, ToastType type = ToastType.Success, int durationMs = 2000)
+        private async void CheckForUpdates_Click(object sender, RoutedEventArgs e)
         {
-            ToastText.Text = message;
+            EnqueueToast("Checking for updates...", ToastType.Info);
 
-            switch (type)
+            try
             {
-                case ToastType.Error:
-                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(200, 50, 50)); // red
-                    ToastText.Foreground = Brushes.White;
-                    ToastText.Text = "⚠ " + message;
-                    break;
+                // Simulate version check (replace with real logic)
+                var assemblyVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                string currentVersion = assemblyVersion != null ? $"{assemblyVersion.Major}.{assemblyVersion.Minor}.{assemblyVersion.Build}" : "unknown";
+                string latestVersion = await GetLatestGitHubVersion();
 
-                case ToastType.Warning:
-                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(255, 165, 0)); // orange
-                    ToastText.Foreground = Brushes.Black;
-                    ToastText.Text = "⚠ " + message;
-                    break;
+                if (latestVersion == null || currentVersion == "unknown")
+                {
+                    EnqueueToast("No release found or failed to check for updates.", ToastType.Info);
+                    DownloadUpdateButton.Visibility = Visibility.Collapsed;
+                }
+                else if (latestVersion.TrimStart('v') != currentVersion)
+                {
+                    EnqueueToast($"Update available: {latestVersion}", ToastType.Warning);
+                    DownloadUpdateButton.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    EnqueueToast("You're using the latest version.", ToastType.Success);
+                    DownloadUpdateButton.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch (Exception)
+            {
+                EnqueueToast("Failed to check for updates.", ToastType.Error);
+            }
+        }
 
-                case ToastType.Info:
-                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(70, 130, 180)); // steel blue
-                    ToastText.Foreground = Brushes.White;
-                    ToastText.Text = "ℹ " + message;
-                    break;
+        public async Task<string> GetLatestGitHubVersion()
+        {
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("AddonPublisher");
 
-                case ToastType.Success:
-                default:
-                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(50, 150, 50)); // green
-                    ToastText.Foreground = Brushes.White;
-                    ToastText.Text = "✔ " + message;
-                    break;
+            try
+            {
+                var response = await client.GetAsync("https://api.github.com/repos/darkrunedk/AddonPublisher/releases/latest");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // Handle 404 or other errors gracefully
+                    return null;
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+
+                string tag = doc.RootElement.GetProperty("tag_name").GetString();
+                _latestReleaseUrl = doc.RootElement.GetProperty("html_url").GetString();
+
+                return tag;
+            }
+            catch
+            {
+                // Network error, JSON parse error, etc.
+                return null;
+            }
+        }
+
+        private void DownloadUpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_latestReleaseUrl))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = _latestReleaseUrl,
+                    UseShellExecute = true
+                });
+            }
+        }
+
+        public void EnqueueToast(string message, ToastType type = ToastType.Success, int durationMs = 2000)
+        {
+            _toastQueue.Enqueue((message, type, durationMs));
+            if (!_isToastShowing)
+                _ = ProcessToastQueue();
+        }
+
+        private async Task ProcessToastQueue()
+        {
+            _isToastShowing = true;
+
+            while (_toastQueue.Count > 0)
+            {
+                var (message, type, durationMs) = _toastQueue.Dequeue();
+
+                ToastText.Text = message;
+                ToastPanel.Visibility = Visibility.Visible;
+
+                switch (type)
+                {
+                    case ToastType.Error:
+                        ToastPanel.Background = new SolidColorBrush(Color.FromRgb(200, 50, 50));
+                        ToastText.Foreground = Brushes.White;
+                        ToastText.Text = "⚠ " + message;
+                        break;
+                    case ToastType.Warning:
+                        ToastPanel.Background = new SolidColorBrush(Color.FromRgb(255, 165, 0));
+                        ToastText.Foreground = Brushes.Black;
+                        ToastText.Text = "⚠ " + message;
+                        break;
+                    case ToastType.Info:
+                        ToastPanel.Background = new SolidColorBrush(Color.FromRgb(70, 130, 180));
+                        ToastText.Foreground = Brushes.White;
+                        ToastText.Text = "ℹ " + message;
+                        break;
+                    case ToastType.Success:
+                    default:
+                        ToastPanel.Background = new SolidColorBrush(Color.FromRgb(50, 150, 50));
+                        ToastText.Foreground = Brushes.White;
+                        ToastText.Text = "✔ " + message;
+                        break;
+                }
+
+                var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
+                ToastPanel.BeginAnimation(OpacityProperty, fadeIn);
+
+                await Task.Delay(durationMs);
+
+                var fadeOut = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(500));
+                fadeOut.Completed += (s, e) => ToastPanel.Visibility = Visibility.Collapsed;
+                ToastPanel.BeginAnimation(OpacityProperty, fadeOut);
+
+                await Task.Delay(500); // Wait for fade-out to complete
             }
 
-            ToastPanel.Visibility = Visibility.Visible;
-
-            var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
-            ToastPanel.BeginAnimation(OpacityProperty, fadeIn);
-
-            await Task.Delay(durationMs);
-
-            var fadeOut = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(500));
-            fadeOut.Completed += (s, e) => ToastPanel.Visibility = Visibility.Collapsed;
-            ToastPanel.BeginAnimation(OpacityProperty, fadeOut);
+            _isToastShowing = false;
         }
     }
 }

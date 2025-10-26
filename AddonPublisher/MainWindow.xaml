@@ -28,6 +28,7 @@
         <Menu Grid.Row="0">
             <MenuItem Header="_Help">
                 <MenuItem Header="_About" Click="AboutMenu_Click"/>
+                <MenuItem Header="_Check for Updates" Click="CheckForUpdates_Click"/>
             </MenuItem>
         </Menu>
 
@@ -46,6 +47,7 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,0,0,10">
                 <Button x:Name="CreateZipButton" Content="Create Zip" Click="CreateZip_Click" Margin="0,0,10,0"/>
                 <Button x:Name="OpenFolderButton" Content="Show in Folder" Click="OpenFolder_Click" IsEnabled="False"/>
+                <Button x:Name="DownloadUpdateButton" Content="Download Latest Version" Click="DownloadUpdateButton_Click" Visibility="Collapsed" Margin="0,0,0,10"/>
             </StackPanel>
         </StackPanel>
     </Grid>
