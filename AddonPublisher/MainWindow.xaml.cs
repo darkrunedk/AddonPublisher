@@ -1,10 +1,13 @@
-﻿using System;
+﻿using AddonPublisher.Models.Enums;
+using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Forms;
+using System.Windows.Media;
 
 namespace AddonPublisher
 {
@@ -14,6 +17,7 @@ namespace AddonPublisher
     public partial class MainWindow : Window
     {
         private string _selectedFolder = "";
+        private string _lastZipPath = "";
         private readonly double _windowBaseHeight;
 
         public MainWindow()
@@ -33,8 +37,43 @@ namespace AddonPublisher
                 SuggestZipName();
             }
         }
+
         private void TocFileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            SuggestZipName();
+        }
+
+        private void BumpVersionInToc(string tocFile)
+        {
+            var lines = File.ReadAllLines(tocFile);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (lines[i].StartsWith("## Version:", StringComparison.OrdinalIgnoreCase))
+                {
+                    string version = lines[i].Substring("## Version:".Length).Trim();
+                    string[] parts = version.Split('.');
+                    if (parts.Length > 0 && int.TryParse(parts[^1], out int patch))
+                    {
+                        parts[^1] = (patch + 1).ToString();
+                        string newVersion = string.Join(".", parts);
+                        lines[i] = $"## Version: {newVersion}";
+                    }
+                    break;
+                }
+            }
+            File.WriteAllLines(tocFile, lines);
+        }
+
+        private void BumpVersionCheckbox_Checked(object sender, RoutedEventArgs e)
+        {
+            BumpAllCheckbox.IsEnabled = true;
+            SuggestZipName();
+        }
+
+        private void BumpVersionCheckbox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            BumpAllCheckbox.IsChecked = false;
+            BumpAllCheckbox.IsEnabled = false;
             SuggestZipName();
         }
 
@@ -42,14 +81,27 @@ namespace AddonPublisher
         {
             if (string.IsNullOrEmpty(_selectedFolder))
             {
-                System.Windows.MessageBox.Show("Please select a folder first.");
+                ShowToast("No folder selected.", ToastType.Error);
                 return;
+            }
+
+            if (BumpVersionCheckbox.IsChecked == true)
+            {
+                if (BumpAllCheckbox.IsChecked == true)
+                {
+                    foreach (string tocFile in Directory.GetFiles(_selectedFolder, "*.toc"))
+                        BumpVersionInToc(tocFile);
+                }
+                else if (TocFileList.SelectedItem is string selectedToc)
+                {
+                    BumpVersionInToc(selectedToc);
+                }
             }
 
             var addonInfo = GetAddonInfoFromToc();
             if (addonInfo == null)
             {
-                System.Windows.MessageBox.Show("No .toc file found to determine addon name.");
+                ShowToast("No .toc file selected or found.", ToastType.Error);
                 return;
             }
 
@@ -79,7 +131,10 @@ namespace AddonPublisher
                 archive.CreateEntryFromFile(file, relativePath);
             }
 
-            System.Windows.MessageBox.Show("Zip file created successfully!");
+            ShowToast("Zip file created successfully!", ToastType.Success);
+
+            _lastZipPath = zipPath;
+            OpenFolderButton.IsEnabled = true;
         }
 
         private void PopulateTocFileList()
@@ -116,6 +171,12 @@ namespace AddonPublisher
             }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
+        private void AboutMenu_Click(object sender, RoutedEventArgs e)
+        {
+            string message = "Addon Packager v1.0\nCreated by DarkruneDK\n\nThis tool helps you zip World of Warcraft addons, bump version numbers, and exclude git-related files.";
+            System.Windows.MessageBox.Show(message, "About", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
         private void SuggestZipName()
         {
             var info = GetAddonInfoFromToc();
@@ -123,6 +184,10 @@ namespace AddonPublisher
             {
                 string suggestedName = $"{info.Value.addonName}-{info.Value.version}.zip";
                 ZipNameBox.Text = suggestedName;
+
+                ZipNameHint.Text = BumpVersionCheckbox.IsChecked == true
+                ? "Suggested filename is based on the selected .toc file and the bumped version number."
+                : "Suggested filename is based on the selected .toc file and its current version number.";
             }
         }
 
@@ -138,11 +203,75 @@ namespace AddonPublisher
                 if (line.StartsWith("## Version:", StringComparison.OrdinalIgnoreCase))
                 {
                     version = line.Substring("## Version:".Length).Trim();
+
+                    // If bumping is enabled, simulate the bump
+                    if (BumpVersionCheckbox.IsChecked == true)
+                    {
+                        string[] parts = version.Split('.');
+                        if (parts.Length > 0 && int.TryParse(parts[^1], out int patch))
+                        {
+                            parts[^1] = (patch + 1).ToString();
+                            version = string.Join(".", parts);
+                        }
+                    }
                     break;
                 }
             }
 
             return (addonName, version);
+        }
+
+        private void OpenFolder_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_lastZipPath) && File.Exists(_lastZipPath))
+            {
+                string folder = Path.GetDirectoryName(_lastZipPath)!;
+                System.Diagnostics.Process.Start("explorer.exe", folder);
+            }
+        }
+
+        private async void ShowToast(string message, ToastType type = ToastType.Success, int durationMs = 2000)
+        {
+            ToastText.Text = message;
+
+            switch (type)
+            {
+                case ToastType.Error:
+                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(200, 50, 50)); // red
+                    ToastText.Foreground = Brushes.White;
+                    ToastText.Text = "⚠ " + message;
+                    break;
+
+                case ToastType.Warning:
+                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(255, 165, 0)); // orange
+                    ToastText.Foreground = Brushes.Black;
+                    ToastText.Text = "⚠ " + message;
+                    break;
+
+                case ToastType.Info:
+                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(70, 130, 180)); // steel blue
+                    ToastText.Foreground = Brushes.White;
+                    ToastText.Text = "ℹ " + message;
+                    break;
+
+                case ToastType.Success:
+                default:
+                    ToastPanel.Background = new SolidColorBrush(Color.FromRgb(50, 150, 50)); // green
+                    ToastText.Foreground = Brushes.White;
+                    ToastText.Text = "✔ " + message;
+                    break;
+            }
+
+            ToastPanel.Visibility = Visibility.Visible;
+
+            var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
+            ToastPanel.BeginAnimation(OpacityProperty, fadeIn);
+
+            await Task.Delay(durationMs);
+
+            var fadeOut = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(500));
+            fadeOut.Completed += (s, e) => ToastPanel.Visibility = Visibility.Collapsed;
+            ToastPanel.BeginAnimation(OpacityProperty, fadeOut);
         }
     }
 }
