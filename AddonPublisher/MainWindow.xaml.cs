@@ -28,6 +28,8 @@ namespace AddonPublisher
         private readonly Queue<(string message, ToastType type, int duration)> _toastQueue = new();
         private bool _isToastShowing = false;
 
+        private string _lastestAssetUrl = null;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -258,6 +260,17 @@ namespace AddonPublisher
                 {
                     EnqueueToast($"Update available: {latestVersion}", ToastType.Warning);
                     DownloadUpdateButton.Visibility = Visibility.Visible;
+
+                    string updaterPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AddonPublisher.Updater.exe");
+
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = updaterPath,
+                        Arguments = $"\"{_lastestAssetUrl}\" \"{AppDomain.CurrentDomain.BaseDirectory}\"",
+                        UseShellExecute = true
+                    });
+
+                    Environment.Exit(0);
                 }
                 else
                 {
@@ -290,6 +303,17 @@ namespace AddonPublisher
                 using var doc = JsonDocument.Parse(json);
 
                 string tag = doc.RootElement.GetProperty("tag_name").GetString();
+                var assets = doc.RootElement.GetProperty("assets");
+                foreach (var asset in assets.EnumerateArray())
+                {
+                    string name = asset.GetProperty("name").GetString();
+                    if (name != null && name.EndsWith(".zip"))
+                    {
+                        _lastestAssetUrl = asset.GetProperty("browser_download_url").GetString();
+                        break;
+                    }
+                }
+
                 _latestReleaseUrl = doc.RootElement.GetProperty("html_url").GetString();
 
                 return tag;
